@@ -1,60 +1,50 @@
 from pydantic import BaseModel, EmailStr, validator
-from typing import Optional, List
-from datetime import datetime
+from typing import Optional, List, Generic, TypeVar, Any, Dict
+from datetime import datetime, date
 from enum import Enum
-from typing import Generic, TypeVar, Optional, Any
 
-class State(str, Enum):
-    ABIA = "Abia"
-    ADAMAWA = "Adamawa"
-    AKWA_IBOM = "Akwa Ibom"
-    ANAMBRA = "Anambra"
-    BAUCHI = "Bauchi"
-    BAYELSA = "Bayelsa"
-    BENUE = "Benue"
-    BORNO = "Borno"
-    CROSS_RIVER = "Cross River"
-    DELTA = "Delta"
-    EBONYI = "Ebonyi"
-    EDO = "Edo"
-    EKITI = "Ekiti"
-    ENUGU = "Enugu"
-    FCT = "Federal Capital Territory"
-    GOMBE = "Gombe"
-    IMO = "Imo"
-    JIGAWA = "Jigawa"
-    KADUNA = "Kaduna"
-    KANO = "Kano"
-    KATSINA = "Katsina"
-    KEBBI = "Kebbi"
-    KOGI = "Kogi"
-    KWARA = "Kwara"
-    LAGOS = "Lagos"
-    NASARAWA = "Nasarawa"
-    NIGER = "Niger"
-    OGUN = "Ogun"
-    ONDO = "Ondo"
-    OSUN = "Osun"
-    OYO = "Oyo"
-    PLATEAU = "Plateau"
-    RIVERS = "Rivers"
-    SOKOTO = "Sokoto"
-    TARABA = "Taraba"
-    YOBE = "Yobe"
-    ZAMFARA = "Zamfara"
+# Import enums directly from models file
+from app.models.models import UserRole, State, ElectionType
 
-# Add UserRole enum for Pydantic
-class UserRole(str, Enum):
-    USER = "user"
-    ADMIN = "admin"
-    SUPER_ADMIN = "super_admin"
+T = TypeVar('T')
+
+class StandardResponse(BaseModel, Generic[T]):
+    status: bool
+    data: Optional[T] = None
+    error: Optional[str] = None
+    message: Optional[str] = None
+
+    model_config = {
+        "from_attributes": True
+    }
+
+# Political Party Schemas
+class PoliticalPartyBase(BaseModel):
+    name: str
+    acronym: str
+    logo_url: Optional[str] = None
+    description: Optional[str] = None
+    founded_date: Optional[datetime] = None
+
+class PoliticalPartyCreate(PoliticalPartyBase):
+    pass
+
+class PoliticalPartyResponse(PoliticalPartyBase):
+    id: int
+    created_at: datetime
     
+    model_config = {
+        "from_attributes": True
+    }
+
 # User Schemas
 class UserBase(BaseModel):
     nin: str
     email: EmailStr
     full_name: str
     state_of_residence: State
+    profile_image_url: Optional[str] = None
+    date_of_birth: Optional[date] = None
     role: UserRole = UserRole.USER
 
 class UserCreate(UserBase):
@@ -78,10 +68,11 @@ class UserResponse(UserBase):
     id: int
     is_active: bool
     is_verified: bool
+    registration_date: datetime
     created_at: datetime
     
     model_config = {
-        "from_attributes": True  # This replaces the old Config class
+        "from_attributes": True
     }
 
 # Auth Schemas
@@ -94,7 +85,7 @@ class TokenData(BaseModel):
     username: Optional[str] = None
 
 class LoginRequest(BaseModel):
-    username: str  # Can be email or NIN
+    username: str
     password: str
 
 # OTP Schemas
@@ -119,15 +110,105 @@ class ResetPasswordRequest(BaseModel):
         if len(v) < 8:
             raise ValueError('Password must be at least 8 characters long')
         return v
+
+# Election Schemas
+class ElectionBase(BaseModel):
+    title: str
+    description: Optional[str] = None
+    election_type: ElectionType
+    state: Optional[State] = None
+    is_active: bool = False
+    start_date: Optional[datetime] = None
+    end_date: Optional[datetime] = None
+
+class ElectionCreate(ElectionBase):
+    pass
+
+class ElectionResponse(ElectionBase):
+    id: int
+    created_at: datetime
     
-T = TypeVar('T')
+    model_config = {
+        "from_attributes": True
+    }
 
-class StandardResponse(BaseModel, Generic[T]):
-    status: bool
-    data: Optional[T] = None
-    error: Optional[str] = None
-    message: Optional[str] = None
+class PositionBase(BaseModel):
+    title: str
+    description: Optional[str] = None
 
+class PositionCreate(PositionBase):
+    election_id: int
+
+class PositionResponse(PositionBase):
+    id: int
+    election_id: int
+    
+    model_config = {
+        "from_attributes": True
+    }
+
+class CandidateBase(BaseModel):
+    name: str
+    bio: Optional[str] = None
+    profile_image_url: Optional[str] = None
+
+class CandidateCreate(CandidateBase):
+    position_id: int
+    party_id: Optional[int] = None
+
+class CandidateResponse(CandidateBase):
+    id: int
+    position_id: int
+    party: Optional[PoliticalPartyResponse] = None
+    
+    model_config = {
+        "from_attributes": True
+    }
+
+class VoteRequest(BaseModel):
+    candidate_id: int
+
+class VoteResponse(BaseModel):
+    vote_id: int
+    message: str
+    
+    model_config = {
+        "from_attributes": True
+    }
+
+# Extended schemas for detailed views
+class CandidateWithVotes(CandidateResponse):
+    votes_count: int = 0
+
+class PositionWithCandidates(PositionResponse):
+    candidates: List[CandidateWithVotes] = []
+
+class ElectionWithPositions(ElectionResponse):
+    positions: List[PositionWithCandidates] = []
+    total_votes: int = 0
+
+class VoterProfile(BaseModel):
+    user: UserResponse
+    total_votes_cast: int
+    elections_participated: List[str]
+    
+    model_config = {
+        "from_attributes": True
+    }
+
+# Election results with party information
+class PartyResults(BaseModel):
+    party: PoliticalPartyResponse
+    total_votes: int
+    percentage: float
+    candidates: List[CandidateWithVotes]
+
+class ElectionResultsDetailed(BaseModel):
+    election: ElectionResponse
+    party_results: List[PartyResults]
+    total_votes: int
+    voter_turnout: float
+    
     model_config = {
         "from_attributes": True
     }

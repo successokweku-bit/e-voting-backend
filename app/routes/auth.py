@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks,Query
+from fastapi import APIRouter, Depends, HTTPException, status, BackgroundTasks,Query, UploadFile, File
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from sqlalchemy.orm import Session
 from datetime import timedelta
@@ -13,6 +13,9 @@ from app.schemas.schemas import (
 from app.core.security import create_access_token, verify_token
 from app.core.config import settings
 from app.services.auth import AuthService, OTPService
+
+from app.core.file_upload import FileUploadService
+from fastapi import UploadFile, File
 
 router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/token")
@@ -313,4 +316,87 @@ async def get_users_paginated(
             data=None,
             error=str(e),
             message="Error retrieving users"
+        )
+    
+
+@router.put("/me/profile-image", response_model=StandardResponse[UserResponse])
+async def update_my_profile_image(
+    profile_image: UploadFile = File(...),
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Update current user's profile image"""
+    try:
+        # Delete old profile image if exists
+        if current_user.profile_image_url:
+            FileUploadService.delete_file(current_user.profile_image_url)
+        
+        # Save new profile image
+        profile_image_url = await FileUploadService.save_upload_file(profile_image, "uploads/profile_images")
+        current_user.profile_image_url = profile_image_url
+        
+        db.commit()
+        db.refresh(current_user)
+        
+        user_response = UserResponse.model_validate(current_user)
+        
+        return StandardResponse[UserResponse](
+            status=True,
+            data=user_response,
+            error=None,
+            message="Profile image updated successfully"
+        )
+        
+    except Exception as e:
+        db.rollback()
+        return StandardResponse[UserResponse](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error updating profile image"
+        )
+
+@router.get("/me/voter-profile", response_model=StandardResponse[dict])
+async def get_my_voter_profile(
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db)
+):
+    """Get current user's voter profile with voting history"""
+    try:
+        # Get user's voting history
+        user_votes = db.query(Vote).filter(Vote.user_id == current_user.id).all()
+        total_votes_cast = len(user_votes)
+        
+        # Get elections participated in
+        election_ids = [vote.election_id for vote in user_votes]
+        elections_participated = db.query(Election).filter(Election.id.in_(election_ids)).all()
+        election_titles = [election.title for election in elections_participated]
+        
+        voter_profile = {
+            "user": UserResponse.model_validate(current_user),
+            "total_votes_cast": total_votes_cast,
+            "elections_participated": election_titles,
+            "voting_history": [
+                {
+                    "election_id": vote.election_id,
+                    "election_title": next((e.title for e in elections_participated if e.id == vote.election_id), "Unknown Election"),
+                    "voted_at": vote.created_at
+                }
+                for vote in user_votes
+            ]
+        }
+        
+        return StandardResponse[dict](
+            status=True,
+            data=voter_profile,
+            error=None,
+            message="Voter profile retrieved successfully"
+        )
+        
+    except Exception as e:
+        return StandardResponse[dict](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error retrieving voter profile"
         )

@@ -1,12 +1,14 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Query
+from datetime import datetime
+from fastapi import APIRouter, Depends, HTTPException, status, Query, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import List, Optional
 
 from app.models.database import get_db
-from app.models.models import User, UserRole
-from app.schemas.schemas import UserResponse, StandardResponse
+from app.models.models import User, UserRole, PoliticalParty
+from app.schemas.schemas import UserResponse, StandardResponse, PoliticalPartyCreate, PoliticalPartyResponse
 from app.core.roles import get_current_admin, get_current_super_admin
 from app.core.security import get_password_hash
+from app.core.file_upload import FileUploadService
 
 router = APIRouter()
 
@@ -14,7 +16,7 @@ router = APIRouter()
 
 @router.get("/users", response_model=StandardResponse[List[UserResponse]])
 async def get_all_users(
-    current_user: User = Depends(get_current_admin),  # Requires admin role
+    current_user: User = Depends(get_current_admin),
     db: Session = Depends(get_db)
 ):
     """Get all users (Admin only)"""
@@ -76,7 +78,7 @@ async def get_user_by_id(
 async def update_user_role(
     user_id: int,
     new_role: UserRole,
-    current_user: User = Depends(get_current_super_admin),  # Only super_admin can change roles
+    current_user: User = Depends(get_current_super_admin),
     db: Session = Depends(get_db)
 ):
     """Update user role (Super Admin only)"""
@@ -175,7 +177,7 @@ async def update_user_status(
 @router.delete("/users/{user_id}", response_model=StandardResponse[dict])
 async def delete_user(
     user_id: int,
-    current_user: User = Depends(get_current_super_admin),  # Only super_admin can delete
+    current_user: User = Depends(get_current_super_admin),
     db: Session = Depends(get_db)
 ):
     """Delete user (Super Admin only)"""
@@ -215,6 +217,192 @@ async def delete_user(
             data=None,
             error=str(e),
             message="Error deleting user"
+        )
+
+# === POLITICAL PARTY MANAGEMENT ===
+
+@router.post("/parties", response_model=StandardResponse[PoliticalPartyResponse])
+async def create_political_party(
+    name: str = Form(...),
+    acronym: str = Form(...),
+    description: Optional[str] = Form(None),
+    founded_date: Optional[datetime] = Form(None),
+    logo: Optional[UploadFile] = File(None),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Create a new political party (Admin only)"""
+    try:
+        # Check if party with same name or acronym already exists
+        existing_party = db.query(PoliticalParty).filter(
+            (PoliticalParty.name == name) | (PoliticalParty.acronym == acronym)
+        ).first()
+        
+        if existing_party:
+            return StandardResponse[PoliticalPartyResponse](
+                status=False,
+                data=None,
+                error="Political party with this name or acronym already exists",
+                message="Party creation failed"
+            )
+        
+        # Handle logo upload
+        logo_url = None
+        if logo:
+            logo_url = await FileUploadService.save_upload_file(logo, "uploads/party_logos")
+        
+        # Create party
+        party_data = {
+            "name": name,
+            "acronym": acronym,
+            "description": description,
+            "founded_date": founded_date,
+            "logo_url": logo_url
+        }
+        
+        party = PoliticalParty(**party_data)
+        db.add(party)
+        db.commit()
+        db.refresh(party)
+        
+        party_response = PoliticalPartyResponse.model_validate(party)
+        
+        return StandardResponse[PoliticalPartyResponse](
+            status=True,
+            data=party_response,
+            error=None,
+            message="Political party created successfully"
+        )
+        
+    except Exception as e:
+        db.rollback()
+        return StandardResponse[PoliticalPartyResponse](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error creating political party"
+        )
+
+@router.get("/parties", response_model=StandardResponse[List[PoliticalPartyResponse]])
+async def get_all_parties(
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Get all political parties (Admin only)"""
+    try:
+        parties = db.query(PoliticalParty).all()
+        parties_response = [PoliticalPartyResponse.model_validate(party) for party in parties]
+        
+        return StandardResponse[List[PoliticalPartyResponse]](
+            status=True,
+            data=parties_response,
+            error=None,
+            message=f"Retrieved {len(parties_response)} political parties"
+        )
+        
+    except Exception as e:
+        return StandardResponse[List[PoliticalPartyResponse]](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error retrieving political parties"
+        )
+
+# === USER PROFILE IMAGE MANAGEMENT ===
+
+@router.put("/users/{user_id}/profile-image", response_model=StandardResponse[UserResponse])
+async def update_user_profile_image(
+    user_id: int,
+    profile_image: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Update user profile image (Admin only)"""
+    try:
+        user = db.query(User).filter(User.id == user_id).first()
+        if not user:
+            return StandardResponse[UserResponse](
+                status=False,
+                data=None,
+                error="User not found",
+                message="Profile image update failed"
+            )
+        
+        # Delete old profile image if exists
+        if user.profile_image_url:
+            FileUploadService.delete_file(user.profile_image_url)
+        
+        # Save new profile image
+        profile_image_url = await FileUploadService.save_upload_file(profile_image, "uploads/profile_images")
+        user.profile_image_url = profile_image_url
+        
+        db.commit()
+        db.refresh(user)
+        
+        user_response = UserResponse.model_validate(user)
+        
+        return StandardResponse[UserResponse](
+            status=True,
+            data=user_response,
+            error=None,
+            message="Profile image updated successfully"
+        )
+        
+    except Exception as e:
+        db.rollback()
+        return StandardResponse[UserResponse](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error updating profile image"
+        )
+
+# === CANDIDATE IMAGE MANAGEMENT ===
+
+@router.put("/candidates/{candidate_id}/profile-image", response_model=StandardResponse[dict])
+async def update_candidate_profile_image(
+    candidate_id: int,
+    profile_image: UploadFile = File(...),
+    current_user: User = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """Update candidate profile image (Admin only)"""
+    try:
+        from app.models.models import Candidate
+        
+        candidate = db.query(Candidate).filter(Candidate.id == candidate_id).first()
+        if not candidate:
+            return StandardResponse[dict](
+                status=False,
+                data=None,
+                error="Candidate not found",
+                message="Profile image update failed"
+            )
+        
+        # Delete old profile image if exists
+        if candidate.profile_image_url:
+            FileUploadService.delete_file(candidate.profile_image_url)
+        
+        # Save new profile image
+        profile_image_url = await FileUploadService.save_upload_file(profile_image, "uploads/candidate_images")
+        candidate.profile_image_url = profile_image_url
+        
+        db.commit()
+        
+        return StandardResponse[dict](
+            status=True,
+            data={"candidate_id": candidate_id, "profile_image_url": profile_image_url},
+            error=None,
+            message="Candidate profile image updated successfully"
+        )
+        
+    except Exception as e:
+        db.rollback()
+        return StandardResponse[dict](
+            status=False,
+            data=None,
+            error=str(e),
+            message="Error updating candidate profile image"
         )
 
 # === ADMIN DASHBOARD ENDPOINTS ===
