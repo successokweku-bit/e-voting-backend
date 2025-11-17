@@ -1,13 +1,15 @@
 from pydantic import BaseModel, EmailStr, validator
-from typing import Optional, List, Generic, TypeVar, Any, Dict
+from typing import Optional, List, Generic, TypeVar
 from datetime import datetime, date
 from enum import Enum
 
-# Import enums directly from models file
 from app.models.models import UserRole, State, ElectionType
 
-T = TypeVar('T')
+T = TypeVar("T")
 
+# -------------------------
+# STANDARD RESPONSE
+# -------------------------
 class StandardResponse(BaseModel, Generic[T]):
     status: bool
     data: Optional[T] = None
@@ -18,7 +20,9 @@ class StandardResponse(BaseModel, Generic[T]):
         "from_attributes": True
     }
 
-# Political Party Schemas
+# -------------------------
+# POLITICAL PARTY SCHEMAS
+# -------------------------
 class PoliticalPartyBase(BaseModel):
     name: str
     acronym: str
@@ -32,12 +36,14 @@ class PoliticalPartyCreate(PoliticalPartyBase):
 class PoliticalPartyResponse(PoliticalPartyBase):
     id: int
     created_at: datetime
-    
+
     model_config = {
         "from_attributes": True
     }
 
-# User Schemas
+# -------------------------
+# USER SCHEMAS
+# -------------------------
 class UserBase(BaseModel):
     nin: str
     email: EmailStr
@@ -47,21 +53,43 @@ class UserBase(BaseModel):
     date_of_birth: Optional[date] = None
     role: UserRole = UserRole.USER
 
+    # Normalize state
+    @validator("state_of_residence", pre=True)
+    def normalize_state(cls, v):
+        if isinstance(v, State):
+            return v
+        v_str = str(v).strip().lower()
+        for state in State:
+            if v_str == state.value.lower():
+                return state
+        raise ValueError(f"Invalid state '{v}'. Allowed values: {[s.value for s in State]}")
+
+    # Normalize role
+    @validator("role", pre=True)
+    def normalize_role(cls, v):
+        if isinstance(v, UserRole):
+            return v
+        v_str = str(v).strip().lower()
+        for role in UserRole:
+            if v_str == role.value.lower():
+                return role
+        raise ValueError(f"Invalid role '{v}'. Allowed values: {[r.value for r in UserRole]}")
+
 class UserCreate(UserBase):
     password: str
 
-    @validator('password')
+    @validator("password")
     def password_strength(cls, v):
         if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
+            raise ValueError("Password must be at least 8 characters long")
         return v
 
-    @validator('nin')
+    @validator("nin")
     def nin_length(cls, v):
         if len(v) != 11:
-            raise ValueError('NIN must be 11 digits long')
+            raise ValueError("NIN must be 11 digits long")
         if not v.isdigit():
-            raise ValueError('NIN must contain only digits')
+            raise ValueError("NIN must contain only digits")
         return v
 
 class UserResponse(UserBase):
@@ -70,12 +98,14 @@ class UserResponse(UserBase):
     is_verified: bool
     registration_date: datetime
     created_at: datetime
-    
+
     model_config = {
         "from_attributes": True
     }
 
-# Auth Schemas
+# -------------------------
+# AUTH SCHEMAS
+# -------------------------
 class Token(BaseModel):
     access_token: str
     token_type: str
@@ -88,7 +118,9 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
-# OTP Schemas
+# -------------------------
+# OTP SCHEMAS
+# -------------------------
 class OTPVerificationRequest(BaseModel):
     email: EmailStr
     otp_code: str
@@ -97,7 +129,9 @@ class OTPResponse(BaseModel):
     message: str
     email: EmailStr
 
-# Password Reset Schemas
+# -------------------------
+# PASSWORD RESET
+# -------------------------
 class ForgotPasswordRequest(BaseModel):
     email: EmailStr
 
@@ -105,13 +139,15 @@ class ResetPasswordRequest(BaseModel):
     token: str
     new_password: str
 
-    @validator('new_password')
+    @validator("new_password")
     def password_strength(cls, v):
         if len(v) < 8:
-            raise ValueError('Password must be at least 8 characters long')
+            raise ValueError("Password must be at least 8 characters long")
         return v
 
-# Election Schemas
+# -------------------------
+# ELECTION SCHEMAS
+# -------------------------
 class ElectionBase(BaseModel):
     title: str
     description: Optional[str] = None
@@ -127,7 +163,7 @@ class ElectionCreate(ElectionBase):
 class ElectionResponse(ElectionBase):
     id: int
     created_at: datetime
-    
+
     model_config = {
         "from_attributes": True
     }
@@ -142,7 +178,7 @@ class PositionCreate(PositionBase):
 class PositionResponse(PositionBase):
     id: int
     election_id: int
-    
+
     model_config = {
         "from_attributes": True
     }
@@ -160,7 +196,7 @@ class CandidateResponse(CandidateBase):
     id: int
     position_id: int
     party: Optional[PoliticalPartyResponse] = None
-    
+
     model_config = {
         "from_attributes": True
     }
@@ -171,12 +207,14 @@ class VoteRequest(BaseModel):
 class VoteResponse(BaseModel):
     vote_id: int
     message: str
-    
+
     model_config = {
         "from_attributes": True
     }
 
-# Extended schemas for detailed views
+# -------------------------
+# EXTENDED SCHEMAS
+# -------------------------
 class CandidateWithVotes(CandidateResponse):
     votes_count: int = 0
 
@@ -191,12 +229,11 @@ class VoterProfile(BaseModel):
     user: UserResponse
     total_votes_cast: int
     elections_participated: List[str]
-    
+
     model_config = {
         "from_attributes": True
     }
 
-# Election results with party information
 class PartyResults(BaseModel):
     party: PoliticalPartyResponse
     total_votes: int
@@ -208,7 +245,7 @@ class ElectionResultsDetailed(BaseModel):
     party_results: List[PartyResults]
     total_votes: int
     voter_turnout: float
-    
+
     model_config = {
         "from_attributes": True
     }
