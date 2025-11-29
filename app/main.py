@@ -6,33 +6,27 @@ from app.routes import auth, admin, elections
 from app.models.database import engine
 from app.models.models import Base
 import os
-from app.core.database import create_tables
 
-# Create database tables
-print("Creating database tables...")
-Base.metadata.create_all(bind=engine)
-print("Database tables created!")
-
-# # Create database tables explicitly
-# print("Creating database tables...")
-# create_tables()
-# print("Database tables created!")
-
-# Create FastAPI app
+# Create FastAPI app FIRST
 app = FastAPI(
     title="E-Voting API",
     description="A secure e-voting system with role-based access control",
     version="2.0.0"
 )
 
-# CORS middleware
+# Enable CORS BEFORE anything else
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.ALLOWED_ORIGINS,
+    allow_origins=settings.ALLOWED_ORIGINS or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Create database tables
+print("Creating database tables...")
+Base.metadata.create_all(bind=engine)
+print("Database tables created!")
 
 # Create uploads directory structure
 os.makedirs("uploads/profile_images", exist_ok=True)
